@@ -1,0 +1,13 @@
+# Store text as LF. Exceptions below keep the bytes Windows tools require.
+* text=auto eol=lf
+
+# cmd.exe parses batch files reliably only with CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Windows PowerShell 5.1 treats a UTF-8 script as ANSI unless it starts with a BOM.
+# Keep that BOM in the blob and leave the line endings as LF.
+# working-tree-encoding=UTF-8-BOM is not used: Git hands that name to iconv,
+# and glibc iconv does not implement it, so add/checkout fails on Linux
+# (including GitHub-hosted runners).
+*.ps1 text eol=lf

@@ -1,0 +1,47 @@
+name: PSScriptAnalyzer
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze mc-download.ps1
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Get-PSRepository -Name PSGallery -ErrorAction SilentlyContinue)) {
+            Register-PSRepository -Default
+          }
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module -Name PSScriptAnalyzer -RequiredVersion 1.25.0 -Scope CurrentUser -Force
+
+          $results = @(Invoke-ScriptAnalyzer -Path './mc-download.ps1')
+          if ($results.Count -eq 0) {
+            Write-Host 'PSScriptAnalyzer: no findings.'
+            exit 0
+          }
+
+          $results |
+            Format-Table -AutoSize Severity, RuleName, Line, Message |
+            Out-String -Width 220 |
+            Write-Host
+
+          $errors = @($results | Where-Object { $_.Severity -eq 'Error' -or $_.Severity -eq 'ParseError' })
+          if ($errors.Count -gt 0) {
+            Write-Error ("PSScriptAnalyzer reported {0} error(s)." -f $errors.Count)
+            exit 1
+          }
+
+          Write-Host ("PSScriptAnalyzer reported {0} warning(s). Warnings do not fail this check." -f $results.Count)
+          exit 0
