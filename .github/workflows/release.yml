@@ -1,0 +1,66 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build release zip
+        shell: bash
+        run: |
+          python3 << 'PY'
+          import os
+          import zipfile
+          from pathlib import Path
+
+          tag = os.environ["GITHUB_REF_NAME"]
+          files = {
+              "mc-download.ps1": Path("mc-download.ps1").read_bytes(),
+              "mc-download.bat": Path("mc-download.bat").read_bytes(),
+              "README.md": Path("README.md").read_bytes(),
+              "LICENSE": Path("LICENSE").read_bytes(),
+          }
+          ps1 = files["mc-download.ps1"]
+          if not ps1.startswith(b"\xef\xbb\xbf"):
+              raise SystemExit("mc-download.ps1 is missing the UTF-8 BOM")
+          bat = files["mc-download.bat"].replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+          files["mc-download.bat"] = bat.replace(b"\n", b"\r\n")
+          if b"\r\n" not in files["mc-download.bat"]:
+              raise SystemExit("mc-download.bat has no CRLF line endings")
+
+          out_dir = Path("dist")
+          out_dir.mkdir(exist_ok=True)
+          out = out_dir / f"mc-downloader-{tag}.zip"
+          with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+              for name, data in files.items():
+                  info = zipfile.ZipInfo(filename=name)
+                  info.compress_type = zipfile.ZIP_DEFLATED
+                  info.external_attr = 0o644 << 16
+                  zf.writestr(info, data)
+          print(f"wrote {out} ({out.stat().st_size} bytes)")
+          PY
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          notes=".github/release-notes/${tag}.md"
+          asset="dist/mc-downloader-${tag}.zip"
+          test -f "${notes}"
+          test -f "${asset}"
+          gh release create "${tag}" \
+            "${asset}" \
+            --title "${tag}" \
+            --notes-file "${notes}"
