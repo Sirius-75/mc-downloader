@@ -7,7 +7,7 @@
 >
 > This project was implemented via **vibe coding (AI-assisted)**. It is intended for **personal use only**, comes with **no guarantee of updates or maintenance**, and is provided **as-is**.
 
-从 Mojang 官方公开文件服务器（或 BMCLAPI 镜像）下载原版 Minecraft，并写成与官方启动器、HMCL、PCL 兼容的 `.minecraft` 目录。脚本只下载文件，不启动游戏。
+从 Mojang 官方公开文件服务器（或 BMCLAPI 镜像）下载原版 Minecraft，安装到与官方启动器、HMCL、PCL 兼容的 `.minecraft` 目录。脚本只下载文件，不启动游戏。
 
 **English:** A standalone Windows PowerShell script that downloads vanilla Minecraft public files from Mojang’s official servers or the BMCLAPI mirror into a launcher-compatible `.minecraft` folder. It does not launch the game.
 
@@ -15,7 +15,7 @@
 
 - 支持 Windows PowerShell 5.1（Windows 10/11 自带）和 PowerShell 7。
 - 默认下载最新正式版，也可指定版本号、最新快照，或只列出版本。
-- 下载源可选官方、BMCLAPI，或按系统语言 / 时区自动选择。除「仅官方」外，单个文件失败会改用另一个源，最多重试 3 轮。
+- 下载源可选官方、BMCLAPI，或按系统语言 / 时区自动选择。`-Source Official` 只用官方源；其余模式在单个文件失败时会换另一个源，最多重试 3 轮。
 - 多线程下载（1–64）。已存在且通过 SHA1 与文件大小校验的文件会跳过，中断后重新运行即可补齐。
 - 目录与官方启动器、HMCL、PCL 兼容：版本 json、客户端 jar、按 Windows 规则筛选的支持库和 natives（x64 / x86 / ARM64，含新旧两种 natives 格式）、资源索引与资源对象、日志配置。
 - 旧版本资源会额外复制到 `assets/virtual` 或 `resources`。
