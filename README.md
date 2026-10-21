@@ -43,6 +43,22 @@ dotnet build src\mc-download\mc-download.csproj -c Release
 
 生成的文件在 `src\mc-download\bin\Release\net48\mc-download.exe`。
 
+## 第一次运行时的 SmartScreen 提示
+
+第一次双击 `mc-download.exe`，Windows 的 Microsoft Defender SmartScreen 可能会显示「Windows 已保护你的电脑」，发布者一栏是「发布者未知」。这个 exe **没有代码签名证书**（未签名），而且是新发布的文件，还没有建立信誉，所以会出现这道提示。
+
+可以点「更多信息」，再点「仍要运行」。
+
+运行前请知道这些风险：
+
+- 这个 exe **未签名**，没有代码签名证书。
+- 程序用 **vibe coding（AI 辅助编程）** 写成，**仅供个人使用**，**没有经过审计**。
+- 按 [MIT 许可证](https://github.com/Sirius-75/mc-downloader/blob/v2.0.0/LICENSE)「现状」提供，**不提供任何担保**。
+- 只从官方 GitHub Release 下载：[Release v2.0.0](https://github.com/Sirius-75/mc-downloader/releases/tag/v2.0.0)。
+- 可以核对 v2.0.0 的 `mc-download.exe`：大小 **70144** 字节，SHA256 `ead12da7e6e5a0efe66f27ec0df128d8de6da21fa66856970424ab212f64111a`。
+- 可以查看源码，或按仓库里的 GitHub Actions 自己编译；也可以改用 PowerShell 脚本 `mc-download.ps1`（双击 `mc-download.bat` 即可）。
+- **要不要运行，完全由你自己决定，风险自负。**
+
 ## 脚本
 
 不想用图形界面时，双击 `mc-download.bat` 即可。它会在脚本所在目录创建 `.minecraft`，并下载当前最新正式版。
