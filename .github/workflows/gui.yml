@@ -1,0 +1,143 @@
+name: GUI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gui-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: Build exe and download 1.12.2
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Build
+        run: dotnet build src/mc-download/mc-download.csproj -c Release --nologo -warnaserror
+
+      - name: Self-test and download 1.12.2
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+          $OutputEncoding = [System.Text.Encoding]::UTF8
+
+          $exe = Join-Path (Resolve-Path 'src/mc-download/bin/Release/net48') 'mc-download.exe'
+          if (-not (Test-Path -LiteralPath $exe)) { throw "missing $exe" }
+          $outDir = Split-Path -Parent $exe
+          $extra = @(Get-ChildItem -LiteralPath $outDir -File | Where-Object { $_.Extension -in '.dll', '.config' })
+          if ($extra.Count -gt 0) { throw "portable exe should not ship extra files: $($extra.Name -join ', ')" }
+
+          $bytes = [IO.File]::ReadAllBytes($exe)
+          if ($bytes.Length -lt 20000 -or $bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) { throw 'exe is not a plausible PE file' }
+          $pe = [BitConverter]::ToInt32($bytes, 0x3C)
+          $subsystem = [BitConverter]::ToUInt16($bytes, $pe + 24 + 68)
+          if ($subsystem -ne 2) { throw "expected GUI subsystem, got $subsystem" }
+          $ascii = [Text.Encoding]::ASCII.GetString($bytes)
+          if ($ascii -notlike '*mscoree.dll*') { throw 'not a .NET Framework executable' }
+          if ($ascii -like '*hostfxr*') { throw 'unexpected .NET Core apphost' }
+          $needle = [Text.Encoding]::Unicode.GetBytes('开始下载')
+          $foundUi = $false
+          for ($i = 0; $i -le $bytes.Length - $needle.Length; $i++) {
+            $ok = $true
+            for ($j = 0; $j -lt $needle.Length; $j++) {
+              if ($bytes[$i + $j] -ne $needle[$j]) { $ok = $false; break }
+            }
+            if ($ok) { $foundUi = $true; break }
+          }
+          if (-not $foundUi) { throw 'Simplified Chinese UI string missing from exe' }
+
+          $csproj = Get-Content -Raw -LiteralPath 'src/mc-download/mc-download.csproj'
+          if ($csproj -notmatch '<Version>([^<]+)</Version>') { throw 'csproj has no Version' }
+          $expected = $Matches[1]
+          $ver = [Diagnostics.FileVersionInfo]::GetVersionInfo($exe).FileVersion
+          if ($ver -notlike "$expected*") { throw "file version $ver != $expected" }
+
+          # WinExe (subsystem 2): pwsh's call operator does not wait or set $LASTEXITCODE.
+          function Invoke-McDownload([string[]]$ArgumentList) {
+            $psi = [Diagnostics.ProcessStartInfo]::new()
+            $psi.FileName = $exe
+            $psi.UseShellExecute = $false
+            foreach ($arg in $ArgumentList) { [void]$psi.ArgumentList.Add($arg) }
+            $proc = [Diagnostics.Process]::Start($psi)
+            if ($null -eq $proc) { throw "failed to start $exe" }
+            if (-not $proc.WaitForExit(1200000)) {
+              try { $proc.Kill() } catch { }
+              throw "timed out: $($ArgumentList -join ' ')"
+            }
+            return $proc.ExitCode
+          }
+
+          $selfLog = Join-Path $env:RUNNER_TEMP 'mc-selftest.log'
+          $selfCode = Invoke-McDownload @('--self-test', '--log', $selfLog)
+          if ($selfCode -ne 0) {
+            if (Test-Path -LiteralPath $selfLog) { Get-Content -LiteralPath $selfLog }
+            throw "self-test exit $selfCode"
+          }
+          Get-Content -LiteralPath $selfLog
+
+          $game = Join-Path $env:RUNNER_TEMP 'mc-1122'
+          $log1 = Join-Path $env:RUNNER_TEMP 'mc-dl.log'
+          $dlCode = Invoke-McDownload @('--download', '1.12.2', '--dir', $game, '--threads', '8', '--log', $log1)
+          if ($dlCode -ne 0) {
+            if (Test-Path -LiteralPath $log1) { Get-Content -LiteralPath $log1 -Tail 80 }
+            throw "download exit $dlCode"
+          }
+
+          $jsonPath = Join-Path $game 'versions\1.12.2\1.12.2.json'
+          $jar = Join-Path $game 'versions\1.12.2\1.12.2.jar'
+          $profiles = Join-Path $game 'launcher_profiles.json'
+          foreach ($p in @($jar, $jsonPath, $profiles)) {
+            if (-not (Test-Path -LiteralPath $p)) { throw "missing $p" }
+          }
+          $meta = Get-Content -Raw -LiteralPath $jsonPath | ConvertFrom-Json
+          $index = Join-Path $game ("assets\indexes\" + $meta.assetIndex.id + ".json")
+          $logId = $meta.logging.client.file.id
+          $logConfig = Join-Path $game ("assets\log_configs\" + $logId)
+          foreach ($p in @($index, $logConfig)) {
+            if (-not (Test-Path -LiteralPath $p)) { throw "missing $p" }
+          }
+          $expect = $meta.downloads.client.sha1.ToLowerInvariant()
+          $actual = (Get-FileHash -LiteralPath $jar -Algorithm SHA1).Hash.ToLowerInvariant()
+          if ($actual -ne $expect) { throw "client sha1 $actual != $expect" }
+          $libs = @(Get-ChildItem -LiteralPath (Join-Path $game 'libraries') -Recurse -Filter *.jar)
+          if ($libs.Count -lt 20) { throw "too few libraries: $($libs.Count)" }
+          $linux = @(Get-ChildItem -LiteralPath (Join-Path $game 'libraries') -Recurse -Filter '*natives-linux*')
+          $osx = @(Get-ChildItem -LiteralPath (Join-Path $game 'libraries') -Recurse -Filter '*natives-osx*')
+          if ($linux.Count -gt 0 -or $osx.Count -gt 0) { throw 'non-windows natives were downloaded' }
+          $winNatives = @(Get-ChildItem -LiteralPath (Join-Path $game 'libraries') -Recurse -Filter '*natives-windows*')
+          if ($winNatives.Count -lt 1) { throw 'windows natives missing' }
+          $objects = @(Get-ChildItem -LiteralPath (Join-Path $game 'assets\objects') -Recurse -File)
+          if ($objects.Count -lt 100) { throw "too few assets: $($objects.Count)" }
+          $text1 = Get-Content -Raw -LiteralPath $log1
+          if ($text1 -notmatch '新下载：[1-9]') { throw 'first run did not download anything' }
+
+          $profileBefore = Get-FileHash -LiteralPath $profiles -Algorithm SHA1
+          $log2 = Join-Path $env:RUNNER_TEMP 'mc-dl2.log'
+          $dlCode2 = Invoke-McDownload @('--download', '1.12.2', '--dir', $game, '--threads', '8', '--log', $log2)
+          if ($dlCode2 -ne 0) {
+            if (Test-Path -LiteralPath $log2) { Get-Content -LiteralPath $log2 -Tail 40 }
+            throw "second download exit $dlCode2"
+          }
+          $text2 = Get-Content -Raw -LiteralPath $log2
+          if ($text2 -notmatch '新下载：0') { throw 'second run should skip existing files' }
+          if ($text2 -notmatch '失败：0') { throw 'second run reported failures' }
+          $profileAfter = Get-FileHash -LiteralPath $profiles -Algorithm SHA1
+          if ($profileBefore.Hash -ne $profileAfter.Hash) { throw 'launcher_profiles.json was rewritten' }
+          Write-Host '1.12.2 download and skip verified.'

@@ -86,7 +86,7 @@ function Invoke-FileTask($Task) {
         foreach ($url in $Task.Urls) {
             try {
                 $wc = New-Object System.Net.WebClient
-                $wc.Headers.Add('User-Agent', 'mc-download.ps1/1.0')
+                $wc.Headers.Add('User-Agent', 'mc-download.ps1/2.0.0')
                 try { $wc.DownloadFile($url, $tmp) } finally { $wc.Dispose() }
                 $len = (New-Object System.IO.FileInfo $tmp).Length
                 if ($Task.Size -gt 0 -and $len -ne $Task.Size) { throw "大小不符：期望 $($Task.Size)，实际 $len" }
@@ -172,7 +172,7 @@ function Get-RemoteJson([string]$Url) {
         for ($i = 1; $i -le 3; $i++) {
             try {
                 $wc = New-Object System.Net.WebClient
-                $wc.Headers.Add('User-Agent', 'mc-download.ps1/1.0')
+                $wc.Headers.Add('User-Agent', 'mc-download.ps1/2.0.0')
                 $wc.Encoding = [Text.Encoding]::UTF8
                 try { return ($wc.DownloadString($u) | ConvertFrom-Json) } finally { $wc.Dispose() }
             } catch { $errs += "$u -> $($_.Exception.Message)"; Start-Sleep -Milliseconds (300 * $i) }
