@@ -42,10 +42,23 @@ jobs:
           if ($ver -notlike "$($Matches[1])*") { throw "unexpected file version $ver" }
           New-Item -ItemType Directory -Force dist | Out-Null
           Copy-Item -LiteralPath $exe dist/mc-download.exe
-          & (Join-Path (Resolve-Path $dir) 'mc-download.exe') --self-test --log (Join-Path $env:RUNNER_TEMP 'mc-selftest.log')
-          if ($LASTEXITCODE -ne 0) {
-            Get-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'mc-selftest.log') -ErrorAction SilentlyContinue
-            throw "self-test exit $LASTEXITCODE"
+          # WinExe (subsystem 2): pwsh's call operator does not wait or set $LASTEXITCODE.
+          $selfLog = Join-Path $env:RUNNER_TEMP 'mc-selftest.log'
+          $psi = [Diagnostics.ProcessStartInfo]::new()
+          $psi.FileName = (Resolve-Path $exe).Path
+          $psi.UseShellExecute = $false
+          [void]$psi.ArgumentList.Add('--self-test')
+          [void]$psi.ArgumentList.Add('--log')
+          [void]$psi.ArgumentList.Add($selfLog)
+          $proc = [Diagnostics.Process]::Start($psi)
+          if ($null -eq $proc) { throw 'failed to start exe' }
+          if (-not $proc.WaitForExit(600000)) {
+            try { $proc.Kill() } catch { }
+            throw 'self-test timed out'
+          }
+          if ($proc.ExitCode -ne 0) {
+            Get-Content -LiteralPath $selfLog -ErrorAction SilentlyContinue
+            throw "self-test exit $($proc.ExitCode)"
           }
 
       - name: Upload exe

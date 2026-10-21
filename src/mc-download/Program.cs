@@ -26,7 +26,7 @@ namespace McDownload
         static extern IntPtr GetStdHandle(int nStdHandle);
 
         [STAThread]
-        static int Main(string[] args)
+        static void Main(string[] args)
         {
             if (args == null || args.Length == 0)
             {
@@ -38,20 +38,24 @@ namespace McDownload
                     catch (Exception) { }
                 };
                 Application.Run(new MainForm());
-                return 0;
+                return;
             }
 
             TryAttachConsole();
             var logPath = Value(args, "--log");
+            int code;
             using (var sink = new LogSink(logPath))
             {
-                try { return Cli(args, sink); }
+                try { code = Cli(args, sink); }
                 catch (Exception ex)
                 {
                     sink.Report(ex.Message);
-                    return 1;
+                    code = 1;
                 }
             }
+            // WinExe: exit explicitly so a GUI-subsystem process reports the code
+            // even if a leftover thread would otherwise keep the process alive.
+            Environment.Exit(code);
         }
 
         static int Cli(string[] args, LogSink sink)

@@ -69,20 +69,35 @@ jobs:
           $ver = [Diagnostics.FileVersionInfo]::GetVersionInfo($exe).FileVersion
           if ($ver -notlike "$expected*") { throw "file version $ver != $expected" }
 
+          # WinExe (subsystem 2): pwsh's call operator does not wait or set $LASTEXITCODE.
+          function Invoke-McDownload([string[]]$ArgumentList) {
+            $psi = [Diagnostics.ProcessStartInfo]::new()
+            $psi.FileName = $exe
+            $psi.UseShellExecute = $false
+            foreach ($arg in $ArgumentList) { [void]$psi.ArgumentList.Add($arg) }
+            $proc = [Diagnostics.Process]::Start($psi)
+            if ($null -eq $proc) { throw "failed to start $exe" }
+            if (-not $proc.WaitForExit(1200000)) {
+              try { $proc.Kill() } catch { }
+              throw "timed out: $($ArgumentList -join ' ')"
+            }
+            return $proc.ExitCode
+          }
+
           $selfLog = Join-Path $env:RUNNER_TEMP 'mc-selftest.log'
-          & $exe --self-test --log $selfLog
-          if ($LASTEXITCODE -ne 0) {
+          $selfCode = Invoke-McDownload @('--self-test', '--log', $selfLog)
+          if ($selfCode -ne 0) {
             if (Test-Path -LiteralPath $selfLog) { Get-Content -LiteralPath $selfLog }
-            throw "self-test exit $LASTEXITCODE"
+            throw "self-test exit $selfCode"
           }
           Get-Content -LiteralPath $selfLog
 
           $game = Join-Path $env:RUNNER_TEMP 'mc-1122'
           $log1 = Join-Path $env:RUNNER_TEMP 'mc-dl.log'
-          & $exe --download 1.12.2 --dir $game --threads 8 --log $log1
-          if ($LASTEXITCODE -ne 0) {
+          $dlCode = Invoke-McDownload @('--download', '1.12.2', '--dir', $game, '--threads', '8', '--log', $log1)
+          if ($dlCode -ne 0) {
             if (Test-Path -LiteralPath $log1) { Get-Content -LiteralPath $log1 -Tail 80 }
-            throw "download exit $LASTEXITCODE"
+            throw "download exit $dlCode"
           }
 
           $jsonPath = Join-Path $game 'versions\1.12.2\1.12.2.json'
@@ -115,10 +130,10 @@ jobs:
 
           $profileBefore = Get-FileHash -LiteralPath $profiles -Algorithm SHA1
           $log2 = Join-Path $env:RUNNER_TEMP 'mc-dl2.log'
-          & $exe --download 1.12.2 --dir $game --threads 8 --log $log2
-          if ($LASTEXITCODE -ne 0) {
+          $dlCode2 = Invoke-McDownload @('--download', '1.12.2', '--dir', $game, '--threads', '8', '--log', $log2)
+          if ($dlCode2 -ne 0) {
             if (Test-Path -LiteralPath $log2) { Get-Content -LiteralPath $log2 -Tail 40 }
-            throw "second download exit $LASTEXITCODE"
+            throw "second download exit $dlCode2"
           }
           $text2 = Get-Content -Raw -LiteralPath $log2
           if ($text2 -notmatch '新下载：0') { throw 'second run should skip existing files' }
