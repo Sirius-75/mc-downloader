@@ -9,12 +9,65 @@ permissions:
   contents: write
 
 jobs:
+  build-exe:
+    name: Build mc-download.exe
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Build
+        run: dotnet build src/mc-download/mc-download.csproj -c Release --nologo -warnaserror
+
+      - name: Check single-file exe
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          $dir = 'src/mc-download/bin/Release/net48'
+          $exe = Join-Path $dir 'mc-download.exe'
+          if (-not (Test-Path -LiteralPath $exe)) { throw 'exe missing' }
+          $extra = @(Get-ChildItem -LiteralPath $dir -File | Where-Object { $_.Extension -in '.dll', '.config' })
+          if ($extra.Count -gt 0) { throw "expected a single exe, found: $($extra.Name -join ', ')" }
+          $bytes = [IO.File]::ReadAllBytes($exe)
+          if ($bytes.Length -lt 20000 -or $bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) { throw 'exe is not a PE file' }
+          $csproj = Get-Content -Raw -LiteralPath 'src/mc-download/mc-download.csproj'
+          if ($csproj -notmatch '<Version>([^<]+)</Version>') { throw 'csproj has no Version' }
+          $ver = [Diagnostics.FileVersionInfo]::GetVersionInfo((Resolve-Path $exe)).FileVersion
+          if ($ver -notlike "$($Matches[1])*") { throw "unexpected file version $ver" }
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item -LiteralPath $exe dist/mc-download.exe
+          & (Join-Path (Resolve-Path $dir) 'mc-download.exe') --self-test --log (Join-Path $env:RUNNER_TEMP 'mc-selftest.log')
+          if ($LASTEXITCODE -ne 0) {
+            Get-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'mc-selftest.log') -ErrorAction SilentlyContinue
+            throw "self-test exit $LASTEXITCODE"
+          }
+
+      - name: Upload exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: mc-download-exe
+          path: dist/mc-download.exe
+          if-no-files-found: error
+
   publish:
     name: Publish GitHub Release
+    needs: build-exe
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Download exe
+        uses: actions/download-artifact@v4
+        with:
+          name: mc-download-exe
+          path: dist
 
       - name: Build release zip
         shell: bash
@@ -28,6 +81,7 @@ jobs:
           files = {
               "mc-download.ps1": Path("mc-download.ps1").read_bytes(),
               "mc-download.bat": Path("mc-download.bat").read_bytes(),
+              "mc-download.exe": Path("dist/mc-download.exe").read_bytes(),
               "README.md": Path("README.md").read_bytes(),
               "LICENSE": Path("LICENSE").read_bytes(),
           }
@@ -38,6 +92,9 @@ jobs:
           files["mc-download.bat"] = bat.replace(b"\n", b"\r\n")
           if b"\r\n" not in files["mc-download.bat"]:
               raise SystemExit("mc-download.bat has no CRLF line endings")
+          exe = files["mc-download.exe"]
+          if not exe.startswith(b"MZ") or len(exe) < 20000:
+              raise SystemExit("mc-download.exe is not a PE file")
 
           out_dir = Path("dist")
           out_dir.mkdir(exist_ok=True)
@@ -46,7 +103,7 @@ jobs:
               for name, data in files.items():
                   info = zipfile.ZipInfo(filename=name)
                   info.compress_type = zipfile.ZIP_DEFLATED
-                  info.external_attr = 0o644 << 16
+                  info.external_attr = (0o755 if name.endswith(".exe") else 0o644) << 16
                   zf.writestr(info, data)
           print(f"wrote {out} ({out.stat().st_size} bytes)")
           PY
@@ -57,10 +114,13 @@ jobs:
         run: |
           tag="${GITHUB_REF_NAME}"
           notes=".github/release-notes/${tag}.md"
-          asset="dist/mc-downloader-${tag}.zip"
+          zip="dist/mc-downloader-${tag}.zip"
+          exe="dist/mc-download.exe"
           test -f "${notes}"
-          test -f "${asset}"
+          test -f "${zip}"
+          test -f "${exe}"
           gh release create "${tag}" \
-            "${asset}" \
-            --title "${tag}" \
+            "${zip}" \
+            "${exe}" \
+            --title "Release ${tag}" \
             --notes-file "${notes}"

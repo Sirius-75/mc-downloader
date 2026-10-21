@@ -1,2 +1,5 @@
 .minecraft/
 *.log
+bin/
+obj/
+dist/
